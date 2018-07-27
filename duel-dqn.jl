@@ -1,12 +1,17 @@
-using Flux, CuArrays
+using CuArrays
+using Flux
 using BSON:@save
 using Flux:params
 using OpenAIGym
 import Reinforce:action
 import Base: deepcopy
 ENV["CUDA_VISIBLE_DEVICES"] = 4
+
+include("./web.jl")
+
 # ------------------------ Load game environment -------------------------------
-env = GymEnv("Pong-v0")
+env = PongEnv(true)
+# env = GymEnv("Pong-v0")
 
 # Custom Policy for Pong-v0
 mutable struct PongPolicy <: Reinforce.AbstractPolicy
@@ -98,7 +103,7 @@ function save_model(model::nn)
   println("Model saved")
 end
 
-function preprocess(I)
+function preprocess(I::Array{UInt8,3})
   #= preprocess 210x160x3 uint8 frame into 6400 (80x80) 1D float vector =#
   I = I[36:195, :, :] # crop
   I = I[1:2:end, 1:2:end, 1] # downsample by factor of 2
@@ -108,6 +113,9 @@ function preprocess(I)
   I = Float32.(reshape(I, 80,80,1))
   return I#[:] #Flatten and return
 end
+
+# PongEnv gives the preprocessed state as a 6400 Int vector
+preprocess(I::Array{Any,1}) = Float32.(reshape(I, 80,80,1))
 
 # Putting data into replay buffer
 function remember(prev_s, s, a, r, s′, done)
@@ -126,14 +134,14 @@ end
 function action(π::PongPolicy, reward, state, action)
   #if frames % 4 != 0 return π.prev_act end
   if rand() <= get_ϵ() && π.train
-    π.prev_act = rand(1:ACTION_SPACE) 
+    π.prev_act = rand(1:ACTION_SPACE)
     return π.prev_act # UP and DOWN action corresponds to 2 and 3
   end
 
   s = cat(3, preprocess(state), π.prev_states) |> gpu
   act_values = model(s)
   π.prev_act = Flux.argmax(act_values)[1]
-  
+
   return π.prev_act  # returns action max Q-value
 end
 
@@ -175,21 +183,41 @@ function replay()
 end
 
 function episode!(env, π = RandomPolicy())
-  global frames, steps
   ep = Episode(env, π)
   for (s, a, r, s′) in ep
-    #OpenAIGym.render(env)
-    if π.train remember(π.prev_states, s, a, r, s′, r == -1) end
-    π.prev_states = cat(3, preprocess(s), π.prev_states[:,:,1:2,1])
-    π.prev_states = reshape(π.prev_states, size(π.prev_states)..., 1)
-    frames += 1
-    if frames >= REPLAY_START_SIZE
-      replay()
-      steps += 1
-    end
-    
+    episode_process(π, s, a, r, s′)
   end
   ep.total_reward
+end
+
+function episode_process(π, s, a, r, s′)
+  global frames, steps
+  #OpenAIGym.render(env)
+  if π.train remember(π.prev_states, s, a, r, s′, r == -1) end
+  π.prev_states = cat(3, preprocess(s), π.prev_states[:,:,1:2,1])
+  π.prev_states = reshape(π.prev_states, size(π.prev_states)..., 1)
+  frames += 1
+  if frames >= REPLAY_START_SIZE
+    replay()
+    steps += 1
+  end
+end
+
+function episode!(env::PongEnv, π = RandomPolicy())
+  a = 0
+  r = 0
+  total = 0
+  while true
+    s = state(env)
+    a = action(π, r, s, a)
+    step!(env, s, a) do r′, s′
+      episode_process(π, s, a, r′, s′)
+      r = r′
+    end
+    total += r
+    done(env) && break
+  end
+  return total
 end
 
 # ------------------------------ Training --------------------------------------
@@ -198,7 +226,7 @@ e = 1
 steps = 0
 scores = zeros(100)
 idx = 1
-while true
+while e < 500
   reset!(env)
   total_reward = episode!(env, PongPolicy())
   scores[idx] = total_reward
