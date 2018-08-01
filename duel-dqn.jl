@@ -1,4 +1,4 @@
-using CuArrays
+# using CuArrays
 using Flux
 using BSON:@save
 using Flux:params
@@ -7,10 +7,11 @@ import Reinforce:action
 import Base: deepcopy
 ENV["CUDA_VISIBLE_DEVICES"] = 4
 
-include("./web.jl")
+# include("./web.jl")
+include("Env.jl")
 
 # ------------------------ Load game environment -------------------------------
-env = PongEnv(true)
+env = PongEnv()
 # env = GymEnv("Pong-v0")
 
 # Custom Policy for Pong-v0
@@ -19,7 +20,7 @@ mutable struct PongPolicy <: Reinforce.AbstractPolicy
   prev_act
   train::Bool
   function PongPolicy(train = true)
-    prev_state = preprocess(env.state)
+    prev_state = preprocess(state(env))
     prev_states = cat(3, prev_state, prev_state, prev_state)
     prev_states = reshape(prev_states, size(prev_states)..., 1)
     new(prev_states, 2, train)
@@ -114,8 +115,11 @@ function preprocess(I::Array{UInt8,3})
   return I#[:] #Flatten and return
 end
 
-# PongEnv gives the preprocessed state as a 6400 Int vector
-preprocess(I::Array{Any,1}) = Float32.(reshape(I, 80,80,1))
+function preprocess(I::Array{UInt8,2})
+  I = I[1:6:end, 1:6:end]
+  I = Float64.(reshape(I, 80,80,1))
+  return I
+end
 
 # Putting data into replay buffer
 function remember(prev_s, s, a, r, s′, done)
@@ -209,6 +213,7 @@ function episode!(env::PongEnv, π = RandomPolicy())
   total = 0
   while true
     s = state(env)
+    # render(env, preprocess(s))
     a = action(π, r, s, a)
     step!(env, s, a) do r′, s′
       episode_process(π, s, a, r′, s′)
@@ -236,6 +241,7 @@ while e < 500
   println("Episode: $e | Score: $total_reward | eps: $eps | steps: $steps | Avg Score: $avg_score")
   e += 1
 end
+
 #=
 # -------------------------------- Testing -------------------------------------
 ee = 1
