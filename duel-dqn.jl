@@ -1,4 +1,4 @@
-# using CuArrays
+using CuArrays
 using Flux
 using BSON:@save
 using Flux:params
@@ -205,21 +205,24 @@ function episode_process(π, s, a, r, s′)
     replay()
     steps += 1
   end
+  Int(r != 0)
 end
 
 function episode!(env::PongEnv, π = RandomPolicy())
   a = 0
   r = 0
   total = 0
+  games = 0
   while true
     s = state(env)
     # render(env, preprocess(s))
     a = action(π, r, s, a)
     step!(env, s, a) do r′, s′
-      episode_process(π, s, a, r′, s′)
+      games += episode_process(π, s, a, r′, s′)
       r = r′
     end
     total += r
+    games == 21 && break
     done(env) && break
   end
   return total
@@ -231,7 +234,7 @@ e = 1
 steps = 0
 scores = zeros(100)
 idx = 1
-while e < 500
+while true
   reset!(env)
   total_reward = episode!(env, PongPolicy())
   scores[idx] = total_reward
