@@ -1,4 +1,4 @@
-using CuArrays
+# using CuArrays
 using Flux
 using BSON:@save
 using Flux:params
@@ -234,15 +234,18 @@ e = 1
 steps = 0
 scores = zeros(100)
 idx = 1
-while true
-  reset!(env)
-  total_reward = episode!(env, PongPolicy())
-  scores[idx] = total_reward
-  idx = idx % 100 + 1
-  eps = get_ϵ()
-  avg_score = mean(scores)
-  println("Episode: $e | Score: $total_reward | eps: $eps | steps: $steps | Avg Score: $avg_score")
-  e += 1
+function train(env=env, e=e, scores=scores, idx=idx)
+  global steps
+  while true
+    reset!(env)
+    total_reward = episode!(env, PongPolicy())
+    scores[idx] = total_reward
+    idx = idx % 100 + 1
+    eps = get_ϵ()
+    avg_score = mean(scores)
+    println("Episode: $e | Score: $total_reward | eps: $eps | steps: $steps | Avg Score: $avg_score")
+    e += 1
+  end
 end
 
 #=
