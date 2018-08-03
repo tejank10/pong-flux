@@ -1,4 +1,4 @@
-# using CuArrays
+using CuArrays
 using Flux
 using Flux:params
 using OpenAIGym
@@ -241,6 +241,7 @@ function train(env=env, e=e, scores=scores, idx=idx)
   end
 end
 
+train()
 
 #=
 # -------------------------------- Testing -------------------------------------
