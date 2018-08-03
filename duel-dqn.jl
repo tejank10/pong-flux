@@ -1,17 +1,16 @@
 # using CuArrays
 using Flux
-using BSON:@save
 using Flux:params
 using OpenAIGym
 import Reinforce:action
 import Base: deepcopy
 ENV["CUDA_VISIBLE_DEVICES"] = 4
 
-# include("./web.jl")
 include("Env.jl")
 
 # ------------------------ Load game environment -------------------------------
-env = PongEnv()
+show_canvas = false
+env = PongEnv(show_canvas)
 # env = GymEnv("Pong-v0")
 
 # Custom Policy for Pong-v0
@@ -80,6 +79,9 @@ base = Chain(Conv((8,8), 4=>32, relu; stride=(4,4)),
 value = Chain(Dense(6*6*64, 512, relu), Dense(512, 1)) |> gpu
 adv = Chain(Dense(6*6*64, 512, relu), Dense(512, ACTION_SPACE)) |> gpu
 
+include("./helpers.jl")
+
+# model = load_model()
 model = nn(base, value, adv)
 
 model_target = deepcopy(model)
@@ -92,20 +94,9 @@ fit_model(data) = Flux.train!(huber_loss, data, model.opt)
 
 get_ϵ() = frames > ϵ_STEPS ? ϵ_STOP : ϵ_START + frames * (ϵ_STOP - ϵ_START) / ϵ_STEPS
 
-function save_model(model::nn)
-  base_wt = cpu.(Tracker.data.(params(model.base)))
-  val_wt = cpu.(Tracker.data.(params(model.value)))
-  adv_wt = cpu.(Tracker.data.(params(model.adv)))
-
-  @save "models/duel_dqn_base" base_wt
-  @save "models/duel_dqn_val" val_wt
-  @save "models/duel_dqn_adv" adv_wt
-
-  println("Model saved")
-end
 
 function preprocess(I::Array{UInt8,3})
-  #= preprocess 210x160x3 uint8 frame into 6400 (80x80) 1D float vector =#
+  # preprocess 210x160x3 uint8 frame into 6400 (80x80) 1D float vector
   I = I[36:195, :, :] # crop
   I = I[1:2:end, 1:2:end, 1] # downsample by factor of 2
   I[I .== 144] = 0 # erase background (background type 1)
@@ -212,17 +203,19 @@ function episode!(env::PongEnv, π = RandomPolicy())
   a = 0
   r = 0
   total = 0
-  games = 0
   while true
     s = state(env)
-    # render(env, preprocess(s))
+    if show_canvas
+      render(env, s)
+    else
+      #render(env, preprocess(s))
+    end
     a = action(π, r, s, a)
     step!(env, s, a) do r′, s′
-      games += episode_process(π, s, a, r′, s′)
+      episode_process(π, s, a, r′, s′)
       r = r′
     end
     total += r
-    games == 21 && break
     done(env) && break
   end
   return total
@@ -247,6 +240,7 @@ function train(env=env, e=e, scores=scores, idx=idx)
     e += 1
   end
 end
+
 
 #=
 # -------------------------------- Testing -------------------------------------
