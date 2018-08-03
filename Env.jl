@@ -1,3 +1,5 @@
+using Blink, WebIO, JSExpr
+
 mutable struct Vector_
     x
     y
@@ -29,9 +31,16 @@ mutable struct Board
     paddles::NTuple{2,Paddle}
 end
 
+mutable struct Screen
+    w::Blink.Window
+    data::WebIO.Observable{Dict{Any,Any}}
+    out::Channel{Int}
+end
+
 mutable struct PongEnv
     board::Board
     scores::Array{Int}
+    screen::Union{Screen,Void}
 end
 
 state(p::PongEnv) = draw(p.board)
@@ -70,9 +79,9 @@ function step!(f, env::PongEnv, s, a)
 
     r = reward(env.board.ball, env.board)
     if r == 1
-        scores[2] += 1
+        env.scores[2] += 1
     elseif r == -1
-        scores[1] += 1
+        env.scores[1] += 1
     end
 
     s′ = state(env)
@@ -136,7 +145,7 @@ end
 
 hit(paddle::Paddle, ball::Ball) =
   (ball.pos.x + ball.width >= paddle.pos.x &&
-   paddle.pos.y + ball.height >= paddle.pos.y &&
+   ball.pos.y + ball.height >= paddle.pos.y &&
    ball.pos.x < paddle.pos.x + paddle.width &&
    ball.pos.y < paddle.pos.y + paddle.height)
 
@@ -156,10 +165,10 @@ function reward(ball::Ball, board::Board)
     return 0
 end
 
-condA(env::PongEnv) = env.board.ball.pos.x < 0 || env.board.ball.pos.x > env.board.width;
+condA(env::PongEnv) = env.board.ball.pos.x <= 0 || env.board.ball.pos.x > env.board.width;
 condB(env::PongEnv) = env.scores[1] >= 20 || env.scores[2] >= 20
 
-Base.done(env::PongEnv) = condA(env) && condB(env)
+Base.done(env::PongEnv) = condB(env)
 
 function reset!(env::PongEnv)
     env.scores = [0,0]
@@ -180,7 +189,7 @@ function reset!(paddle::Paddle, board::Board)
     paddle.pos.y = floor(board.height/2)
 end
 
-function PongEnv()
+function PongEnv(web=false)
     factor = 6
     width = 80
     height = 80
@@ -189,18 +198,88 @@ function PongEnv()
     ball = Ball(Vector_(floor(w/2), floor(h/2)), Vector_(-5, -1), 2*factor, factor)
     paddle_a = Paddle(Vector_(8*factor, floor(h/2)), Vector_(0, 0), 8*factor, 2*factor, 2*factor)
     paddle_b = Paddle(Vector_(w - 2*factor - 8*factor, floor(h/2)),Vector_(0, 0), 8*factor, 2*factor, 2*factor)
-    PongEnv(Board(w, h, ball, (paddle_a, paddle_b)), [0, 0])
+    s = web ? Screen() : nothing
+    PongEnv(Board(w, h, ball, (paddle_a, paddle_b)), [0, 0], s)
 end
 
-function render(env::PongEnv, c, io=STDOUT)
+function render(env::PongEnv, c::Array{UInt8,2})
+    env.screen != nothing && (
+        return render(env.screen, Dict(
+            "scores"=> env.scores,
+            "state"=> c
+        ))
+    )
     s = Array{String}(size(c)...)
     s[c .== 0] = " "
     s[c .== 1] = "|"
     w, h = size(s)
     for i=1:h
         for j=1:w
-            print(io, s[j,i,1])
+            print(s[j,i,1])
         end
-        print(io, "\n")
+        print("\n")
     end
+end
+
+function Screen()
+    w = Blink.Window();
+    s = Scope()
+    data = Observable(s, "data", Dict())
+    catch_ = Observable(s, "catch", 0)
+    out = Channel{Int}(1)
+    s(dom"div"(
+        dom"canvas[width=480,height=480]"(),
+        dom"div"(
+            dom"label"("Scores:"),
+            dom"input.score[readonly=true,value=0]"(),
+            dom"input.score[readonly=true,value=0]"(),
+        )
+    ))
+    onimport(s, js"""function(){
+        var _ = (e) => document.querySelector(e);
+        var __ = (e) => document.querySelectorAll(e);
+        document.body.style.backgroundColor='#000';
+        document.body.style.color='#fff';
+        __('.score').forEach(e => e.style.display='block');
+        console.log('eee')
+        function draw({state, scores}){
+            var canvas = _('canvas');
+            var width = canvas.width;
+            var height = canvas.height;
+            var ctx = canvas.getContext('2d');
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            var arr = new Array(width*height*4).fill(0);
+            state.forEach((e, i) =>{
+                e.forEach((y, j) => {
+                    if(y){
+                        var h = j*4 + i*4*width;
+                        for (var l = 0; l<4; l++){
+                            arr[h + l] = 255;
+                        }
+                    }
+                });
+            });
+            var imgData = new ImageData((new Uint8ClampedArray(arr)), width, height);
+            ctx.putImageData(imgData,0, 0);
+            __('.score').forEach((e,i) => e.value = scores[i]);
+        }
+        this.draw = draw
+    }""")
+
+    onjs(data, JSExpr.@js x -> begin
+        $catch_[] = Date.now()
+        this.draw(x)
+    end)
+
+    on(catch_) do x
+        put!(out, x)
+    end
+    Blink.body!(w, s)
+    sleep(1)
+    Screen(w, data, out)
+end
+
+function render(s::Screen, val)
+    s.data[] = val
+    take!(s.out)
 end
