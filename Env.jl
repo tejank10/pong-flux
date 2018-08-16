@@ -182,7 +182,7 @@ function reset!(ball::Ball, board::Board)
 	ball.pos.y = floor(board.height/2);
 	k = -1 * sign(ball.speed.x);
 	ball.speed.x = k*5;
-	ball.speed.y = -1 * k;
+	ball.speed.y = -1 * k * rand(-5:5);
 end
 
 function reset!(paddle::Paddle, board::Board)
